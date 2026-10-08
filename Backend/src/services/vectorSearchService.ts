@@ -112,7 +112,7 @@ export async function findSimilarTranscripts(
   const vector = await embedText(text, 'RETRIEVAL_QUERY');
   const result = await getPostgresPool().query<TranscriptRow>(
     `SELECT session_id, role, transcript, created_at,
-            1 - (embedding <=> $3::vector) AS similarity
+            1 - (embedding <=> $2::vector) AS similarity
      FROM public.transcript_embeddings
      WHERE owner_id = $1
      ORDER BY embedding <=> $2::vector

@@ -1,5 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react';
 import { Mic, MicOff, Video, VideoOff, Square, MessageSquare, Brain } from 'lucide-react';
 import SpeechService from '../../services/SpeechService';
 import { useAuth } from '../../context/useAuth';
@@ -7,20 +6,29 @@ import { apiFetch } from '../../context/apiFetch';
 import femaleInterviewerImage from '../../assets/young interviewer.png';
 
 type ConversationItem = {
-  role: 'caller' | 'candidate';
+  role: 'agent' | 'customer';
   content: string;
-  timestamp: Date;
+  timestamp: Date | string;
+};
+
+type CallOutcome = {
+  customer_intent: string;
+  order_id: string | null;
+  resolution_status: string;
+  call_summary: string;
 };
 
 const SupportPage = () => {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const username = user?.name || user?.userName || 'User';
   const [isCallActive, setIsCallActive] = useState(false);
   const [currentQuestion, setCurrentQuestion] = useState('');
   const [userTranscript, setUserTranscript] = useState('');
   const [interimTranscript, setInterimTranscript] = useState('');
   const [conversationHistory, setConversationHistory] = useState<ConversationItem[]>([]);
+  const [callOutcome, setCallOutcome] = useState<CallOutcome | null>(null);
+  const [messageDraft, setMessageDraft] = useState('');
+  const [callError, setCallError] = useState('');
   const [isAISpeaking, setIsAISpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(true);
@@ -36,44 +44,41 @@ const SupportPage = () => {
   const streamRef = useRef<MediaStream | null>(null);
   const silenceTimerRef = useRef<number | null>(null);
 
-  const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
   const handleStartCall = async () => {
     setIsProcessing(true);
+    setCallError('');
+    setCallOutcome(null);
+    setConversationHistory([]);
+    setCurrentQuestion('');
 
     try {
       const response = await apiFetch('/api/call/start', {
         method: 'POST',
-        body: JSON.stringify('Call started')
+        body: JSON.stringify({})
       });
-
       const data = await response.json();
 
-      if (!data.success) {
-        alert(data.error || 'Failed to start call');
-        setIsProcessing(false);
-        return;
-      }
-
-      if (!data.sessionId) {
-        alert('Failed to start call: Missing session ID in response');
-        setIsProcessing(false);
-        return;
+      if (!response.ok || !data.success || !data.sessionId) {
+        throw new Error(data.message || data.error || 'Failed to start the support call.');
       }
 
       sessionIdRef.current = data.sessionId;
       setSessionId(data.sessionId);
 
-      //reset accumulated transcript for new session
       accumulatedTranscriptRef.current = '';
       isSubmittingRef.current = false;
 
       setCurrentQuestion(data.question);
-      setConversationHistory([{ role: 'caller', content: data.question, timestamp: new Date() }]);
+      setConversationHistory([{ role: 'agent', content: data.question, timestamp: new Date() }]);
       setIsCallActive(true);
 
       setIsAISpeaking(true);
-      await SpeechService.speak(data.question);
+      try {
+        await SpeechService.speak(data.question);
+      } catch (error) {
+        console.error('Unable to play the greeting:', error);
+        setCallError('Audio playback is unavailable. You can continue by typing your message.');
+      }
       setIsAISpeaking(false);
 
       if (audioEnabled) {
@@ -82,14 +87,27 @@ const SupportPage = () => {
       }
     } catch (error) {
       console.error('Error starting call:', error);
-      alert('Failed to start call. Please try again.');
+      setCallError(error instanceof Error ? error.message : 'Failed to start the call. Please try again.');
     } finally {
       setIsProcessing(false);
     }
   };
+
+  const submitTypedMessage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const message = messageDraft.trim();
+    if (!message || !isCallActive) return;
+    setMessageDraft('');
+    void handleAnswerComplete(message);
+  };
+
   const handleStopCall = async () => {
     SpeechService.stopListening();
     SpeechService.stopSpeaking();
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
     setIsCallActive(false);
     setIsListening(false);
     setIsProcessing(true);
@@ -103,35 +121,26 @@ const SupportPage = () => {
           body: JSON.stringify({ sessionId: currentSessionId })
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && data.evaluation) {
-            const analyticsPayload = {
-              sessionId: data.sessionId,
-              jobRole: data.jobRole,
-              difficulty: data.difficulty,
-              durationSeconds: data.durationSeconds,
-              conversationHistory: data.conversationHistory || [],
-              evaluation: data.evaluation
-            };
-
-            setIsProcessing(false);
-            navigate('/user/userid', { state: { recentAnalytics: analyticsPayload } });
-            return;
-          }
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.message || 'Unable to retrieve the call summary.');
         }
+        setConversationHistory(data.conversationHistory || []);
+        setCallOutcome(data.outcome || null);
       } catch (error) {
         console.error('Error ending call:', error);
+        setCallError(error instanceof Error ? error.message : 'The call ended, but its summary could not be loaded.');
       }
     }
 
+    sessionIdRef.current = null;
+    setSessionId(null);
     setIsProcessing(false);
 
     streamRef.current?.getTracks().forEach((track: MediaStreamTrack) => track.stop());
   };
 
   const handleAnswerComplete = useCallback(async (answer: string) => {
-    //prevent double-submission
     if (isSubmittingRef.current) {
       return;
     }
@@ -139,7 +148,7 @@ const SupportPage = () => {
     const currentSessionId = sessionIdRef.current;
 
     if (!currentSessionId) {
-      alert('Error: No session ID available. Please start the call again.');
+      setCallError('This call session is no longer available. Please start a new call.');
       return;
     }
 
@@ -156,7 +165,7 @@ const SupportPage = () => {
     accumulatedTranscriptRef.current = '';
 
     setConversationHistory(prev => [...prev, {
-      role: 'candidate',
+      role: 'customer',
       content: answer,
       timestamp: new Date()
     }]);
@@ -170,37 +179,33 @@ const SupportPage = () => {
         body: JSON.stringify({ sessionId: currentSessionId, answer })
       });
 
+      const data = await response.json();
       if (!response.ok) {
-        let errorData;
-        try { errorData = await response.json(); } catch { errorData = { error: `Server error: ${response.status}` }; }
-        alert(`Error: ${errorData?.error || `Server error: ${response.status}`}`);
-        throw new Error(errorData?.error || `Server error: ${response.status}`);
+        throw new Error(data.message || data.error || `Server error: ${response.status}`);
       }
 
-      const data = await response.json();
-
       if (data.success) {
-        if (data.callComplete) {
-          await handleStopCall();
-          return;
-        }
-
         const question = data.question;
         if (!question) {
-          alert('Error: No question received from server');
-          return;
+          throw new Error('The support assistant returned an empty response.');
         }
 
         setCurrentQuestion(question);
         setConversationHistory(prev => [...prev, {
-          role: 'caller',
+          role: 'agent',
           content: question,
           timestamp: new Date()
         }]);
+        setCallOutcome(data.outcome || null);
+        setCallError('');
 
         setIsAISpeaking(true);
-        await delay(2000);
-        await SpeechService.speak(question);
+        try {
+          await SpeechService.speak(question);
+        } catch (error) {
+          console.error('Unable to play the response:', error);
+          setCallError('Audio playback is unavailable. You can continue by typing your message.');
+        }
         setIsAISpeaking(false);
 
         if (audioEnabled) {
@@ -208,13 +213,14 @@ const SupportPage = () => {
           SpeechService.startListening();
         }
       } else {
-        alert(`Error: ${data.error || 'Failed to get next question'}`);
+        throw new Error(data.message || 'The support assistant could not process that message.');
       }
     } catch (error) {
       console.error('Error submitting answer:', error);
+      setIsAISpeaking(false);
+      setCallError(error instanceof Error ? error.message : 'I couldn’t process that message. Please try again.');
     } finally {
       setIsProcessing(false);
-      //release the submission lock so next answer can go through
       isSubmittingRef.current = false;
     }
   }, [audioEnabled]);
@@ -223,7 +229,6 @@ const SupportPage = () => {
     setInterimTranscript(interim);
 
     if (final.trim()) {
-      //accumulate into both display state and the ref
       setUserTranscript(prev => prev + final);
       accumulatedTranscriptRef.current += final;
 
@@ -231,7 +236,6 @@ const SupportPage = () => {
         clearTimeout(silenceTimerRef.current);
       }
 
-      //submit the full accumulated answer, not just the last burst
       silenceTimerRef.current = window.setTimeout(() => {
         const fullAnswer = accumulatedTranscriptRef.current.trim();
         if (fullAnswer) {
@@ -243,6 +247,7 @@ const SupportPage = () => {
 
   const handleSpeechError = useCallback((error: unknown) => {
     console.error('Speech error:', error);
+    setCallError('I couldn’t hear that clearly. Please try speaking again or type your message below.');
   }, []);
 
   const handleInterrupt = useCallback(() => {
@@ -316,7 +321,7 @@ return (
               )}
             </div>
             <div className="text-sm text-gray-600">
-              Questions: {conversationHistory.filter(h => h.role === 'caller').length}
+              Turns: {conversationHistory.filter(h => h.role === 'customer').length}
             </div>
           </div>
 
@@ -326,12 +331,12 @@ return (
               <div className="absolute inset-0 bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center">
                 <img
                   src={femaleInterviewerImage}
-                  alt="Aria"
+                  alt="Aura support assistant"
                   className="w-full h-full object-cover"
                 />
               </div>
               <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-center py-2">
-                <p className="font-medium">Aria</p>
+                <p className="font-medium">Aura</p>
               </div>
             </div>
 
@@ -360,14 +365,14 @@ return (
           <div className="space-y-4 mb-6">
             {currentQuestion && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-600 font-medium mb-1">Current Question:</p>
+                <p className="text-sm text-blue-600 font-medium mb-1">Aura:</p>
                 <p className="text-gray-800">{currentQuestion}</p>
               </div>
             )}
 
             {(userTranscript || interimTranscript) && (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <p className="text-sm text-green-600 font-medium mb-1">Your Answer:</p>
+                <p className="text-sm text-green-600 font-medium mb-1">Your message:</p>
                 <p className="text-gray-800">
                   {userTranscript}
                   <span className="text-gray-400">{interimTranscript}</span>
@@ -375,6 +380,50 @@ return (
               </div>
             )}
           </div>
+
+          {callError && (
+            <p role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              {callError}
+            </p>
+          )}
+
+          {isCallActive && (
+            <form onSubmit={submitTypedMessage} className="mb-6 flex gap-2">
+              <input
+                value={messageDraft}
+                onChange={event => setMessageDraft(event.target.value)}
+                disabled={isProcessing}
+                aria-label="Type a message to Aura"
+                placeholder="Type your Aura Skincare question..."
+                className="min-w-0 flex-1 rounded-lg border border-gray-300 px-4 py-3 text-gray-800 focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+              />
+              <button
+                type="submit"
+                disabled={isProcessing || !messageDraft.trim()}
+                className="rounded-lg bg-blue-600 px-5 py-3 font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Send
+              </button>
+            </form>
+          )}
+
+          {callOutcome && (
+            <section aria-labelledby="call-summary-title" className="mb-6 rounded-xl border border-purple-200 bg-purple-50 p-5">
+              <h2 id="call-summary-title" className="mb-3 text-lg font-semibold text-purple-900">Call summary</h2>
+              <p className="mb-4 text-sm text-purple-900">{callOutcome.call_summary}</p>
+              <dl className="mb-4 grid gap-2 text-sm text-gray-700 sm:grid-cols-3">
+                <div><dt className="font-semibold">Intent</dt><dd>{callOutcome.customer_intent}</dd></div>
+                <div><dt className="font-semibold">Order ID</dt><dd>{callOutcome.order_id || 'Not provided'}</dd></div>
+                <div><dt className="font-semibold">Resolution</dt><dd>{callOutcome.resolution_status}</dd></div>
+              </dl>
+              <details>
+                <summary className="cursor-pointer font-medium text-purple-900">View structured call outcome (JSON)</summary>
+                <pre className="mt-3 overflow-x-auto rounded-lg bg-white p-4 text-xs text-gray-800">
+                  {JSON.stringify(callOutcome, null, 2)}
+                </pre>
+              </details>
+            </section>
+          )}
 
           {/* Conversation History */}
           {conversationHistory.length > 0 && (
@@ -388,13 +437,16 @@ return (
                   <div
                     key={index}
                     className={`p-3 rounded-lg ${
-                      item.role === 'caller'
+                      item.role === 'agent'
                         ? 'bg-blue-50 border-l-4 border-blue-500'
                         : 'bg-green-50 border-l-4 border-green-500'
                     }`}
                   >
                     <p className="text-xs text-gray-500 mb-1">
-                      {item.role === 'caller' ? 'caller' : 'You'}
+                      {item.role === 'agent' ? 'Aura' : 'You'}
+                      <time className="ml-2">
+                        {new Date(item.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                      </time>
                     </p>
                     <p className="text-sm text-gray-800">{item.content}</p>
                   </div>
@@ -414,7 +466,7 @@ return (
                 className="flex items-center space-x-2 px-6 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Mic className="w-5 h-5" />
-                <span>{isProcessing ? 'Starting...' : 'Start Interview'}</span>
+                <span>{isProcessing ? 'Starting...' : 'Start Aura Support Call'}</span>
               </button>
             ) : (
               <>

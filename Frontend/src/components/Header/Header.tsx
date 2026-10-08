@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 // import ThemeToggle from "../ui/theme-toggle";
 import { NavLink, useNavigate } from "react-router-dom"
 import { useAuth } from "../../context/useAuth"
-import { authClient } from "../../context/neonAuth"
+import { authClient, getNeonAccessToken } from "../../context/neonAuth"
 import {
   Card,
   CardHeader,
@@ -154,6 +154,9 @@ function Header() {
                   const result = await authClient.signIn.email(loginForm);
                   if (result.error) throw new Error(result.error.message);
                   if (!result.data?.user) throw new Error('Login succeeded without returning a user.');
+                  if (!await getNeonAccessToken()) {
+                    throw new Error('Your sign-in succeeded, but Neon did not provide an API access token. Please check your Neon Auth session and try again.');
+                  }
                   login({
                     id: result.data.user.id,
                     name: result.data.user.name,
@@ -289,7 +292,9 @@ function Header() {
                     if (verified.error) throw new Error(verified.error.message);
                     const session = await authClient.getSession();
                     if (session.error) throw new Error(session.error.message);
-                    if (!session.data?.user) throw new Error('Verification succeeded but no user session was returned.');
+                    if (!session.data?.user || !session.data.session?.token) {
+                      throw new Error('Verification succeeded, but no authenticated session token was returned.');
+                    }
                     login({
                       id: session.data.user.id,
                       name: session.data.user.name,

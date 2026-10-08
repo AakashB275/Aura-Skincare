@@ -5,7 +5,6 @@ import dotenv from 'dotenv';
 import apiRouter from './src/routes/api.js';
 import rateLimit from 'express-rate-limit';
 import requestLogger from './src/middlewares/requestLogger.js';
-import { verifyTranscriptStorage } from './src/db/postgres.js';
 dotenv.config();
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173')
     .split(',')
@@ -38,7 +37,6 @@ app.use(limiter);
 app.use(requestLogger);
 console.log('✅ Rate limiting configured');
 async function bootstrap() {
-    await verifyTranscriptStorage();
     app.get('/health', (_req, res) => {
         res.status(200).json({ status: 'ok' });
     });

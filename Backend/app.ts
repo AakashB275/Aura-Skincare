@@ -6,7 +6,6 @@ import apiRouter from './src/routes/api.js';
 import rateLimit from 'express-rate-limit';
 import requestLogger from './src/middlewares/requestLogger.js';
 import type { ErrorRequestHandler } from 'express';
-import { verifyTranscriptStorage } from './src/db/postgres.js';
 
 dotenv.config();
 
@@ -46,8 +45,6 @@ app.use(requestLogger);
 console.log('✅ Rate limiting configured');
 
 async function bootstrap() {
-  await verifyTranscriptStorage();
-
   app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok' });
   });
