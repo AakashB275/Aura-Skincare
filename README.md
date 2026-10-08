@@ -14,47 +14,6 @@ Aura is a voice-first conversational agent for skincare support. A signed-in use
 
 ---
 
-## Architecture
-
-```mermaid
-sequenceDiagram
-    participant U as User (browser)
-    participant N as nginx (SPA + /api proxy)
-    participant B as Express API
-    participant G as Gemini Embeddings
-    participant P as Postgres + pgvector (Neon)
-    participant L as Groq (Llama 3.3 70B)
-    participant M as Murf TTS
-
-    U->>N: POST /api/call/start (Bearer JWT)
-    N->>B: proxy
-    B->>B: verify JWT (JWKS) -> authUserId
-    B->>G: embed greeting
-    B->>P: INSERT transcript + vector
-    B-->>U: sessionId + greeting
-    U->>N: POST /api/speech/synthesize
-    N->>B: proxy
-    B->>M: stream TTS (MP3)
-    B-->>U: audio/mpeg
-
-    loop each turn
-        U->>U: speech recognition -> accumulate until 8s silence
-        U->>B: POST /api/call/answer {sessionId, answer}
-        B->>G: embed answer (RETRIEVAL_QUERY)
-        B->>P: top-5 cosine-similar turns WHERE owner_id = user
-        B->>G: embed answer (RETRIEVAL_DOCUMENT)
-        B->>P: INSERT user turn
-        B->>L: system prompt + retrieved context + latest answer
-        L-->>B: reply (<=180 tokens)
-        B->>P: INSERT assistant turn
-        B-->>U: reply + retrieved snippets
-        U->>B: synthesize reply -> play audio -> resume listening
-    end
-
-    U->>B: POST /api/call/end
-    B-->>U: full conversation history
-```
-
 ### Stack
 
 | Layer | Choice |
