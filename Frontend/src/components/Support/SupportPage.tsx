@@ -29,6 +29,8 @@ const SupportPage = () => {
   const [callOutcome, setCallOutcome] = useState<CallOutcome | null>(null);
   const [messageDraft, setMessageDraft] = useState('');
   const [callError, setCallError] = useState('');
+  const [cameraError, setCameraError] = useState('');
+  const [isCameraReady, setIsCameraReady] = useState(false);
   const [isAISpeaking, setIsAISpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(true);
@@ -44,14 +46,50 @@ const SupportPage = () => {
   const streamRef = useRef<MediaStream | null>(null);
   const silenceTimerRef = useRef<number | null>(null);
 
+  const startCamera = async (): Promise<boolean> => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError('Camera access is unavailable in this browser. Check browser support and use HTTPS or localhost.');
+      return false;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      streamRef.current = stream;
+      setIsCameraReady(false);
+      setVideoEnabled(true);
+      setCameraError('');
+      return true;
+    } catch (error) {
+      console.error('Unable to access the camera:', error);
+      const cameraError = error instanceof DOMException && error.name === 'NotAllowedError'
+        ? 'Camera permission was denied. Allow camera access in your browser settings, then use the video button to try again.'
+        : error instanceof DOMException && error.name === 'NotFoundError'
+          ? 'No camera was found. Connect a camera or continue the call without video.'
+          : 'The camera could not be started. Check that it is connected and not being used by another app.';
+      setCameraError(cameraError);
+      return false;
+    }
+  };
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsCameraReady(false);
+  };
+
   const handleStartCall = async () => {
     setIsProcessing(true);
     setCallError('');
+    setCameraError('');
     setCallOutcome(null);
     setConversationHistory([]);
     setCurrentQuestion('');
 
     try {
+      await startCamera();
       const response = await apiFetch('/api/call/start', {
         method: 'POST',
         body: JSON.stringify({})
@@ -87,6 +125,7 @@ const SupportPage = () => {
       }
     } catch (error) {
       console.error('Error starting call:', error);
+      stopCamera();
       setCallError(error instanceof Error ? error.message : 'Failed to start the call. Please try again.');
     } finally {
       setIsProcessing(false);
@@ -137,7 +176,7 @@ const SupportPage = () => {
     setSessionId(null);
     setIsProcessing(false);
 
-    streamRef.current?.getTracks().forEach((track: MediaStreamTrack) => track.stop());
+    stopCamera();
   };
 
   const handleAnswerComplete = useCallback(async (answer: string) => {
@@ -264,11 +303,36 @@ const SupportPage = () => {
     }
   }, [isCallActive, sessionId, handleSpeechResult, handleSpeechError, handleInterrupt]);
 
-  
+  useEffect(() => {
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (!isCallActive || !videoEnabled || !video || !stream) return;
 
-  const toggleVideo = () => {
+    video.srcObject = stream;
+    void video.play().catch((error: unknown) => {
+      console.error('Unable to play the camera preview:', error);
+      setCameraError('Camera is connected but its preview could not be displayed. Try turning video off and on again.');
+    });
+  }, [isCallActive, videoEnabled]);
+
+  useEffect(() => () => {
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    SpeechService.stopListening();
+    SpeechService.stopSpeaking();
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+    }
+  }, []);
+
+  const toggleVideo = async () => {
     const newState = !videoEnabled;
+    if (newState && !streamRef.current) {
+      await startCamera();
+      return;
+    }
+
     setVideoEnabled(newState);
+    setIsCameraReady(false);
     streamRef.current?.getVideoTracks().forEach((track: MediaStreamTrack) => {
       track.enabled = newState;
     });
@@ -349,10 +413,17 @@ return (
                   autoPlay
                   playsInline
                   muted
+                  onLoadedData={() => setIsCameraReady(true)}
+                  onError={() => setCameraError('The camera preview could not be displayed.')}
                 />
               ) : (
                 <div className="absolute inset-0 bg-gray-100 flex items-center justify-center">
                   <VideoOff className="w-16 h-16 text-gray-400" />
+                </div>
+              )}
+              {videoEnabled && !isCameraReady && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-100/90 px-6 text-center text-sm text-gray-600">
+                  {cameraError || (isCallActive ? 'Starting camera preview...' : 'Camera preview will appear when the call starts.')}
                 </div>
               )}
               <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-center py-2">
@@ -384,6 +455,11 @@ return (
           {callError && (
             <p role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
               {callError}
+            </p>
+          )}
+          {cameraError && (
+            <p role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              {cameraError}
             </p>
           )}
 

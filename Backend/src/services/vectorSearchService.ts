@@ -116,7 +116,7 @@ export async function findSimilarTranscripts(
      FROM public.transcript_embeddings
      WHERE owner_id = $1
      ORDER BY embedding <=> $2::vector
-     LIMIT $3`,
+     LIMIT $3::int`,
     [ownerId, serializeVector(vector), limit]
   );
 
