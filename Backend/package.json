@@ -1,0 +1,44 @@
+{
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/app.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "axios": "^1.20.0",
+    "bcrypt": "^6.0.0",
+    "cloudinary": "^2.11.0",
+    "config": "^5.0.1",
+    "connect-flash": "^0.1.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.6",
+    "ejs": "^7.0.1",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.1",
+    "express-request-logger": "^0.0.3",
+    "express-session": "^1.19.0",
+    "express-validator": "^7.3.2",
+    "groq-sdk": "^1.6.0",
+    "jose": "^6.2.12",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.11.1",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "pg": "^8.23.1"
+  },
+  "allowScripts": {
+    "bcrypt@6.0.0": true
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1",
+    "nodemon": "^3.1.14",
+    "typescript": "^7.0.2"
+  }
+}

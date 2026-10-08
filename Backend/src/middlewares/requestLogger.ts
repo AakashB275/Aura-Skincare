@@ -1,0 +1,13 @@
+import type { RequestHandler } from 'express';
+
+const requestLogger: RequestHandler = (req, res, next) => {
+  const startedAt = Date.now();
+
+  res.on('finish', () => {
+    console.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - startedAt}ms`);
+  });
+
+  next();
+};
+
+export default requestLogger;

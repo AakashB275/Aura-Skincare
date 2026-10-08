@@ -1,0 +1,40 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend
+    env_file:
+      - ./Backend/.env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+    expose:
+      - "3000"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_NEON_AUTH_URL: ${VITE_NEON_AUTH_URL:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    restart: unless-stopped
